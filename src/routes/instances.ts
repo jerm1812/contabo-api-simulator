@@ -14,15 +14,17 @@ router.get('/', async (req: Request, res: Response) => {
     const size = parseInt(req.query.size as string) || 10;
     const records = store.getAllInstances();
 
-    // Refresh status from Docker for each instance
-    for (const record of records) {
-      const dockerStatus = await dockerMgr.getContainerStatus(record.containerId);
-      store.updateInstanceStatus(
-        record.instance.instanceId,
-        dockerStatus.status as any,
-        dockerStatus.sshPort
-      );
-    }
+    // Refresh status from Docker in parallel (don't block sequentially)
+    await Promise.all(
+      records.map(async (record) => {
+        const dockerStatus = await dockerMgr.getContainerStatus(record.containerId);
+        store.updateInstanceStatus(
+          record.instance.instanceId,
+          dockerStatus.status as any,
+          dockerStatus.sshPort
+        );
+      })
+    );
 
     const instances = records.map((r) => r.instance);
     const response = buildPaginatedResponse(instances, page, size, '/v1/compute/instances');

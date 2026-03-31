@@ -26,17 +26,19 @@
     "build:docker": "docker build -t contabo-sim-ubuntu:22.04 docker/ubuntu-ssh/ && docker build -t contabo-sim-debian:12 docker/debian-ssh/"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "dockerode": "^4.0.4",
     "express": "^4.21.2",
-    "uuid": "^11.1.0",
-    "cors": "^2.8.5"
+    "js-yaml": "^4.1.1",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
     "@types/dockerode": "^3.3.34",
     "@types/express": "^5.0.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.13.0",
     "@types/uuid": "^10.0.0",
-    "@types/cors": "^2.8.17",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
   }

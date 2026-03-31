@@ -2,13 +2,21 @@ import { InstanceRecord, ContaboInstance, InstanceStatus, ContaboSecret } from '
 import { CONFIG } from './config';
 import { generateMacAddress } from './response-builder';
 
-let nextInstanceId = 100;
 let nextSecretId = 1;
 let nextVHostId = 73000;
 
 // In-memory stores
 const instances = new Map<number, InstanceRecord>();
 const secrets = new Map<number, ContaboSecret>();
+
+/** Generate a random 6-digit instance ID that doesn't collide with existing ones */
+function generateInstanceId(): number {
+  let id: number;
+  do {
+    id = 100000 + Math.floor(Math.random() * 900000); // 100000–999999
+  } while (instances.has(id));
+  return id;
+}
 
 // ─── Instance Operations ───
 
@@ -25,7 +33,7 @@ export function createInstance(params: {
   rootPassword: string;
   osType: string;
 }): InstanceRecord {
-  const instanceId = nextInstanceId++;
+  const instanceId = generateInstanceId();
   const vHostId = nextVHostId++;
 
   const product = CONFIG.productMapping[params.productId] || CONFIG.productMapping['V45'];
