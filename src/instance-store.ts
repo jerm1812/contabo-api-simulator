@@ -27,11 +27,13 @@ export function createInstance(params: {
   displayName: string;
   defaultUser: string;
   sshKeys: number[];
-  containerId: string;
-  sshPort: number;
-  containerIp: string;
+  containerId?: string;
+  sshPort?: number;
+  containerIp?: string;
   rootPassword: string;
   osType: string;
+  scenario?: string;
+  status?: InstanceStatus;
 }): InstanceRecord {
   const instanceId = generateInstanceId();
   const vHostId = nextVHostId++;
@@ -52,14 +54,14 @@ export function createInstance(params: {
     imageId: params.imageId,
     ipConfig: {
       v4: {
-        ip: '127.0.0.1',
+        ip: '',
         netmaskCidr: 32,
-        gateway: '127.0.0.1',
+        gateway: '',
       },
       v6: {
-        ip: '::1',
+        ip: '',
         netmaskCidr: 128,
-        gateway: '::1',
+        gateway: '',
       },
     },
     macAddress: generateMacAddress(),
@@ -70,7 +72,7 @@ export function createInstance(params: {
     sshKeys: params.sshKeys || [],
     createdDate: new Date().toISOString(),
     cancelDate: '',
-    status: 'running' as InstanceStatus,
+    status: params.status ?? ('running' as InstanceStatus),
     vHostId,
     vHostNumber: vHostId,
     vHostName: `m${vHostId}`,
@@ -84,12 +86,27 @@ export function createInstance(params: {
 
   const record: InstanceRecord = {
     instance,
-    containerId: params.containerId,
+    containerId: params.containerId ?? '',
     rootPassword: params.rootPassword,
+    scenario: params.scenario ?? 'normal',
+    phase: params.status && params.status !== 'running' ? 'provisioning' : 'ready',
+    cancelled: false,
   };
 
+  if (params.containerIp) setAddress(record, params.containerIp);
   instances.set(instanceId, record);
   return record;
+}
+
+/** Report an IPv4 address for the instance (empty until the machine exists). */
+export function setAddress(record: InstanceRecord, ip: string): void {
+  record.instance.ipConfig.v4 = { ip, netmaskCidr: 32, gateway: ip ? gatewayFor(ip) : '' };
+}
+
+function gatewayFor(ip: string): string {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return '';
+  return `${parts[0]}.${parts[1]}.${parts[2]}.1`;
 }
 
 export function getInstance(instanceId: number): InstanceRecord | undefined {
@@ -130,6 +147,11 @@ export function deleteInstance(instanceId: number): InstanceRecord | undefined {
     instances.delete(instanceId);
   }
   return record;
+}
+
+/** Drop every instance record (control API reset and tests). */
+export function clearInstances(): void {
+  instances.clear();
 }
 
 // ─── Secret Operations ───

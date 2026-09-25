@@ -62,6 +62,7 @@ export type InstanceStatus =
   | 'stopped'
   | 'error'
   | 'installing'
+  | 'product_not_available'
   | 'unknown';
 
 export interface ContaboPagination {
@@ -143,9 +144,16 @@ export interface ContaboSecret {
   updatedAt: string;
 }
 
-// Internal: tracks Docker container mapping
+// Internal: tracks the machine behind an instance and its simulated lifecycle
 export interface InstanceRecord {
   instance: ContaboInstance;
+  /** Backend machine handle (Docker container ID); '' until the machine exists. */
   containerId: string;
   rootPassword: string;
+  /** Scenario chosen at create time (see src/scenarios.ts). */
+  scenario: string;
+  /** 'provisioning' while the simulated lifecycle runs; 'ready' once it has settled. */
+  phase: 'provisioning' | 'ready';
+  /** Set once the instance is cancelled; its machine is removed. */
+  cancelled: boolean;
 }
