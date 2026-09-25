@@ -21,6 +21,40 @@ Contabo has **no test/sandbox API**. If you're building automation, orchestratio
 
 This simulator gives you a **third option**: a local API that behaves like Contabo but creates actual Docker containers you can SSH into. Same request bodies, same response shapes, real SSH connections.
 
+## Bronto panel fork
+
+This fork is tailored to what the Bronto panel (giga-panel) calls, so staging can rent "nodes" without touching real Contabo. Production must never point at it; the panel refuses to start in production with a non-Contabo endpoint.
+
+**Panel settings (staging only):** `CONTABO_API_URL=http://<simulator>` and `CONTABO_AUTH_URL=http://<simulator>/auth/realms/contabo/protocol/openid-connect/token`. The four Contabo credential settings can be placeholders.
+
+**Endpoints the panel uses:** the token endpoint above (form-encoded password grant), `POST /v1/compute/instances`, `GET /v1/compute/instances/{id}` (polled for `status` and `ipConfig.v4.ip`), `POST .../actions/stop`, `POST .../actions/start`, and `POST .../cancel`, which removes the machine and sets `cancelDate`.
+
+**Lifecycle:** a new instance starts in `provisioning` with no IP, moves to `installing` with its IP halfway through `SIM_PROVISION_DELAY_MS`, and reaches `running` at the full delay.
+
+**Scenarios** decide what each create does: `normal`, `slow` (uses `SIM_SLOW_DELAY_MS`), `stuck` (provisioning forever), `error`, `product_not_available`, `create_fail` (the create call returns 500), and `cancel_fail` (runs normally, but cancel returns 500).
+
+| Env var | Default | Meaning |
+| --- | --- | --- |
+| `SIM_BACKEND` | `docker` | `docker` starts real SSH containers; `none` is API-only with fake `198.51.100.x` addresses |
+| `SIM_REPORT_ADDRESS` | `localhost` | Docker backend only: `localhost` reports 127.0.0.1 plus the published port; `container` reports the container IP with SSH on 22 |
+| `SIM_SCENARIO` | `normal` | Scenario for creates when nothing is queued |
+| `SIM_PROVISION_DELAY_MS` | `5000` | Create to running, normal scenario |
+| `SIM_SLOW_DELAY_MS` | `120000` | Create to running, slow scenario |
+| `SIM_STRICT_AUTH` | off | Require a real password grant and only accept issued tokens on `/v1` |
+| `SIM_TOKEN_FAIL` | off | Every token request fails with 401 |
+| `SIM_CONTROL_TOKEN` | unset | When set, `/sim/*` needs header `X-Sim-Control-Token` |
+| `HOST`, `PORT` | `0.0.0.0`, `5550` | Listen address |
+
+**Control API** (not part of Contabo's API):
+
+- `GET /sim/state` shows settings, the scenario queue, and instances.
+- `PUT /sim/scenario` takes `{"default": "stuck", "next": ["error", "normal"], "provisionDelayMs": 2000}`; `next` is consumed one per create, in order.
+- `POST /sim/faults` takes `{"tokenFailures": 2}`, `{"tokenAlwaysFails": true}`, or `{"revokeTokens": true}` (forces the panel's 401 refresh path).
+- `POST /sim/instances/{id}/status` takes `{"status": "error", "errorMessage": "..."}` and forces a state.
+- `POST /sim/reset` removes every instance and machine and restores the startup settings.
+
+Run the tests with `npm test`; they use the API-only backend, so Docker isn't needed.
+
 ## ✨ Features
 
 - **Identical API surface** — Request/response bodies match Contabo's production API
