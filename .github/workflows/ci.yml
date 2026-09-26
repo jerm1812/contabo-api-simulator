@@ -99,6 +99,8 @@ jobs:
           sleep 3
           left=$(docker ps -aq --filter label=managed-by=contabo-simulator | wc -l)
           echo "managed containers left: $left"; [ "$left" -eq 0 ]
+          vols=$(docker volume ls -q | grep -E "^contabo-sim-(dind|containerd)-$ID$" | wc -l)
+          echo "machine volumes left: $vols"; [ "$vols" -eq 0 ]
       - name: Simulator logs
         if: always()
         run: cat /tmp/sim.log /tmp/sim2.log 2>/dev/null || true

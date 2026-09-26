@@ -43,6 +43,6 @@ RUN rm -f /etc/ssh/ssh_host_* && \
       > /etc/systemd/system/ssh-hostkeys.service && \
     systemctl enable ssh-hostkeys.service ssh.service docker.service
 
-VOLUME ["/var/lib/docker"]
+VOLUME ["/var/lib/docker", "/var/lib/containerd"]
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

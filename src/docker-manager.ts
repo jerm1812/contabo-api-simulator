@@ -52,6 +52,14 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/** Named volumes each machine gets, as [volume name, mount target]. */
+export function machineVolumes(instanceId: string | number): Array<[string, string]> {
+  return [
+    [`contabo-sim-dind-${instanceId}`, '/var/lib/docker'],
+    [`contabo-sim-containerd-${instanceId}`, '/var/lib/containerd'],
+  ];
+}
+
 export async function createContainer(spec: ContainerSpec): Promise<ContainerCreateResult> {
   await ensureNetwork();
 
@@ -60,9 +68,11 @@ export async function createContainer(spec: ContainerSpec): Promise<ContainerCre
   const hostConfig: Docker.HostConfig & { CgroupnsMode?: string } = {
     Privileged: true, // Docker-in-Docker (and systemd) need it
     NetworkMode: NETWORK_NAME,
-    Binds: [
-      `contabo-sim-dind-${instanceId}:/var/lib/docker`, // Named volume gives overlay2 a real ext4 FS
-    ],
+    // Docker inside the machine can't stack overlayfs on the container's own
+    // overlay root. Both of its data dirs get a named volume on the host FS:
+    // /var/lib/docker (classic overlay2) and /var/lib/containerd (the
+    // containerd image store, default since Docker 29).
+    Binds: machineVolumes(instanceId).map(([name, target]) => `${name}:${target}`),
   };
   if (spec.publishPorts) {
     hostConfig.PortBindings = {
@@ -211,13 +221,14 @@ export async function removeContainer(containerId: string): Promise<void> {
   await container.remove({ force: true, v: true });
   console.log(`[DockerManager] Removed container ${containerId.substring(0, 12)}`);
 
-  // Clean up DinD volume
+  // Clean up the machine's Docker data volumes
   if (instanceId) {
-    try {
-      const vol = docker.getVolume(`contabo-sim-dind-${instanceId}`);
-      await vol.remove();
-      console.log(`[DockerManager] Removed DinD volume for instance ${instanceId}`);
-    } catch { /* volume may not exist */ }
+    for (const [name] of machineVolumes(instanceId)) {
+      try {
+        await docker.getVolume(name).remove();
+        console.log(`[DockerManager] Removed volume ${name}`);
+      } catch { /* volume may not exist */ }
+    }
   }
 }
 
