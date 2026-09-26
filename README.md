@@ -44,6 +44,13 @@ This fork is tailored to what the Bronto panel (giga-panel) calls, so staging ca
 | `SIM_TOKEN_FAIL` | off | Every token request fails with 401 |
 | `SIM_CONTROL_TOKEN` | unset | When set, `/sim/*` needs header `X-Sim-Control-Token` |
 | `HOST`, `PORT` | `0.0.0.0`, `5550` | Listen address |
+| `SIM_DOCKER_NETWORK`, `SIM_DOCKER_SUBNET` | `contabo-sim-network`, Docker's choice | Bridge network for machines; fix the subnet so the panel host can route to it |
+| `SIM_ROOT_PASSWORD` | unset | Root password for the entrypoint-style Debian image only; Ubuntu machines are key-only |
+| `SIM_MAX_INSTANCES` | `0` (no cap) | Creates past this many live instances get 429 |
+| `SIM_MACHINE_CPUS`, `SIM_MACHINE_MEMORY_MB`, `SIM_MACHINE_PIDS` | `0` (no cap) | Per-machine Docker limits |
+| `SIM_MAX_AGE_HOURS` | `0` (off) | Instances older than this are cancelled (checked every minute) |
+| `SIM_BOOT_TIMEOUT_MS` | `120000` | How long a systemd machine may take to get `ssh` and `docker` active |
+| `SIM_STATE_FILE` | unset | Save instances and secrets here and restore them on restart |
 
 **Control API** (not part of Contabo's API):
 
@@ -52,6 +59,21 @@ This fork is tailored to what the Bronto panel (giga-panel) calls, so staging ca
 - `POST /sim/faults` takes `{"tokenFailures": 2}`, `{"tokenAlwaysFails": true}`, or `{"revokeTokens": true}` (forces the panel's 401 refresh path).
 - `POST /sim/instances/{id}/status` takes `{"status": "error", "errorMessage": "..."}` and forces a state.
 - `POST /sim/reset` removes every instance and machine and restores the startup settings.
+
+### Bronto staging
+
+`deploy/staging/` runs the simulator next to the Bronto staging panel. On the staging host:
+
+```bash
+deploy/staging/up.sh
+```
+
+That builds the `contabo-sim-ubuntu:22.04` machine image, then starts the simulator from `deploy/staging/docker-compose.yml` on `127.0.0.1:8099`. The panel reaches it with `CONTABO_USE_FAKE=1` (its default outside production) and needs `RENTAL_SSH_KEY` so its installer can log in.
+
+- Machines are systemd containers with sshd and Docker, on the fixed bridge `172.30.0.0/24`. The simulator reports the container IP with SSH on 22, and the host panel routes there directly.
+- Caps are three live machines, 2 CPUs and 2 GB each, and a 24-hour lifetime.
+- State lives in the `sim-state` volume, so restarting the simulator keeps its instances. Machines that vanished, or were still booting, come back as `error`, and unowned machine containers are removed.
+- Machines run privileged (Docker inside Docker needs it), and Docker can't cap their disk here. Only run this on a host you'd trust with the panel's own agent.
 
 Run the tests with `npm test`; they use the API-only backend, so Docker isn't needed.
 
@@ -274,7 +296,7 @@ Open [http://localhost:5550/dashboard](http://localhost:5550/dashboard) to acces
 ```
 contabo-simulator/
 ├── docker/
-│   ├── ubuntu-ssh/          # Ubuntu 22.04 + OpenSSH Dockerfile
+│   ├── ubuntu-systemd/      # Ubuntu 22.04 + systemd, sshd, Docker
 │   └── debian-ssh/          # Debian 12 + OpenSSH Dockerfile
 ├── public/
 │   └── dashboard.html       # Web dashboard + API explorer
@@ -306,21 +328,17 @@ Environment variables:
 
 ## 🔌 How SSH Works
 
-Each container exposes SSH on a random host port. When you create an instance:
+With `SIM_REPORT_ADDRESS=localhost` each container publishes SSH on a random host port. With `container` nothing is published and the instance reports the container IP with SSH on 22. When you create an instance:
 
-1. A Docker container is created from the selected OS image
-2. OpenSSH is configured with the provided password
-3. If `sshKeys` are provided, public keys are injected into `/root/.ssh/authorized_keys`
-4. If `userData` is provided, it's executed inside the container
-5. The host port is returned as `sshPort` in the response
+1. A Docker container is created from the selected OS image. The Ubuntu 22.04 image boots systemd with sshd and Docker, like a real VPS.
+2. Keys from `sshKeys` secrets and cloud-config `ssh_authorized_keys` in `userData` go into `/root/.ssh/authorized_keys`.
+3. Root password login is off. Only the entrypoint-style Debian image takes a password, and only when `SIM_ROOT_PASSWORD` is set.
+4. For systemd images the instance stays `provisioning` until `ssh` and `docker` are active (up to `SIM_BOOT_TIMEOUT_MS`).
 
 Connect with:
 ```bash
-# Password auth (default password: Sim-Pass-123!)
-ssh root@localhost -p <sshPort>
-
-# Key auth (if SSH key secret was provided)
-ssh -i ~/.ssh/<key-name> root@localhost -p <sshPort>
+ssh -i ~/.ssh/<key-name> root@localhost -p <sshPort>     # localhost mode
+ssh -i ~/.ssh/<key-name> root@<container ip>             # container mode
 ```
 
 ## 🤝 Contributing

@@ -23,7 +23,7 @@
     "dev": "ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "build:docker": "docker build -t contabo-sim-ubuntu:22.04 docker/ubuntu-ssh/ && docker build -t contabo-sim-debian:12 docker/debian-ssh/",
+    "build:docker": "docker build -t contabo-sim-ubuntu:22.04 docker/ubuntu-systemd/ && docker build -t contabo-sim-debian:12 docker/debian-ssh/",
     "test": "node --test --require ts-node/register test/*.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test"
   },

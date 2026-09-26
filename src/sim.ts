@@ -3,10 +3,14 @@ import { MachineBackend } from './backend';
 import { ScenarioState, SimSettings, Scenario } from './scenarios';
 import * as store from './instance-store';
 import { InstanceRecord, InstanceStatus } from './types';
-import { CONFIG } from './config';
+import { CONFIG, MachineInit, MachineLimits } from './config';
+
+const NO_LIMITS: MachineLimits = { maxInstances: 0, cpus: 0, memoryMb: 0, pids: 0, maxAgeHours: 0, bootTimeoutMs: 120000 };
 
 export interface SimContext {
   backend: MachineBackend;
+  /** Caps on machines (see limitsFromEnv). */
+  limits: MachineLimits;
   scenarios: ScenarioState;
   /** Startup settings, restored by POST /sim/reset. */
   defaults: SimSettings;
@@ -14,8 +18,18 @@ export interface SimContext {
   tokens: Map<string, number>;
 }
 
-export function newContext(backend: MachineBackend, defaults: SimSettings): SimContext {
-  return { backend, scenarios: new ScenarioState(defaults), defaults, tokens: new Map() };
+export function newContext(
+  backend: MachineBackend,
+  defaults: SimSettings,
+  limits: Partial<MachineLimits> = {}
+): SimContext {
+  return {
+    backend,
+    limits: { ...NO_LIMITS, ...limits },
+    scenarios: new ScenarioState(defaults),
+    defaults,
+    tokens: new Map(),
+  };
 }
 
 const timers = new Map<number, NodeJS.Timeout[]>();
@@ -45,6 +59,7 @@ function settle(record: InstanceRecord, status: InstanceStatus, errorMessage: st
 
 export interface LifecycleInput {
   dockerImage: string;
+  init: MachineInit;
   userData?: string;
   sshPublicKeys: string[];
 }
@@ -83,6 +98,7 @@ export function startLifecycle(ctx: SimContext, record: InstanceRecord, input: L
     .create({
       instanceId: id,
       dockerImage: input.dockerImage,
+      init: input.init,
       displayName: record.instance.displayName,
       rootPassword: record.rootPassword,
       userData: input.userData,
@@ -169,4 +185,35 @@ export async function resetAll(ctx: SimContext): Promise<void> {
 
 export function defaultImageId(): string {
   return Object.keys(CONFIG.imageMapping)[0];
+}
+
+/** Instances that hold a machine or are about to (counted against SIM_MAX_INSTANCES). */
+export function activeInstanceCount(): number {
+  return store
+    .getAllInstances()
+    .filter((r) => !r.cancelled && (r.containerId !== '' || r.phase === 'provisioning')).length;
+}
+
+/**
+ * Cancel instances older than SIM_MAX_AGE_HOURS so a forgotten test machine
+ * never runs for long. Returns the IDs it cancelled.
+ */
+export async function reapExpired(ctx: SimContext, now = Date.now()): Promise<number[]> {
+  const hours = ctx.limits.maxAgeHours;
+  if (!hours) return [];
+  const cutoff = now - hours * 3600 * 1000;
+  const reaped: number[] = [];
+  for (const record of store.getAllInstances()) {
+    if (record.cancelled) continue;
+    const created = Date.parse(record.instance.createdDate);
+    if (!Number.isFinite(created) || created > cutoff) continue;
+    try {
+      await cancelInstance(ctx, record);
+      reaped.push(record.instance.instanceId);
+      console.log(`[Reaper] Cancelled instance ${record.instance.instanceId} (older than ${hours} h)`);
+    } catch (err) {
+      console.error(`[Reaper] ${record.instance.instanceId}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  return reaped;
 }
