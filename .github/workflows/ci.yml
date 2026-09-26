@@ -21,3 +21,84 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  docker-e2e:
+    # Boots a real systemd test machine through the API and logs in over SSH,
+    # the way the Bronto panel's installer does.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci && npm run build
+      - name: Build machine image
+        run: docker build -t contabo-sim-ubuntu:22.04 docker/ubuntu-systemd
+      - name: Start simulator (docker backend, container addresses)
+        run: |
+          ssh-keygen -t ed25519 -N '' -f /tmp/simkey -q
+          ssh-keygen -t ed25519 -N '' -f /tmp/otherkey -q
+          SIM_BACKEND=docker SIM_REPORT_ADDRESS=container SIM_STRICT_AUTH=1 \
+          SIM_DOCKER_NETWORK=sim-e2e SIM_DOCKER_SUBNET=172.30.0.0/24 \
+          SIM_MAX_INSTANCES=2 SIM_MACHINE_CPUS=2 SIM_MACHINE_MEMORY_MB=2048 \
+          SIM_BOOT_TIMEOUT_MS=180000 SIM_STATE_FILE=/tmp/sim-state/state.json PORT=8099 \
+            nohup node dist/index.js > /tmp/sim.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8099/dashboard && exit 0; sleep 1; done
+          cat /tmp/sim.log; exit 1
+      - name: Create an instance the way the panel does
+        run: |
+          tok=$(curl -fsS -X POST http://127.0.0.1:8099/auth/realms/contabo/protocol/openid-connect/token \
+            -d grant_type=password -d client_id=c -d client_secret=s -d username=u -d password=p | jq -r .access_token)
+          echo "TOK=$tok" >> "$GITHUB_ENV"
+          pub=$(cat /tmp/simkey.pub)
+          ud=$(printf '#cloud-config\nssh_authorized_keys:\n  - %s\n' "$pub")
+          body=$(jq -n --arg ud "$ud" '{imageId:"afecbb85-e2fc-46f0-9684-b46b1faf00bb",productId:"V45",region:"EU",displayName:"e2e",period:1,defaultUser:"root",userData:$ud}')
+          id=$(curl -fsS -X POST http://127.0.0.1:8099/v1/compute/instances \
+            -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' -d "$body" | jq -r '.data[0].instanceId')
+          echo "ID=$id" >> "$GITHUB_ENV"
+          for i in $(seq 1 120); do
+            inst=$(curl -fsS http://127.0.0.1:8099/v1/compute/instances/$id -H "Authorization: Bearer $tok" | jq -c '.data[0]')
+            status=$(echo "$inst" | jq -r .status)
+            if [ "$status" = running ]; then echo "IP=$(echo "$inst" | jq -r .ipConfig.v4.ip)" >> "$GITHUB_ENV"; exit 0; fi
+            if [ "$status" = error ]; then echo "$inst"; cat /tmp/sim.log; exit 1; fi
+            sleep 2
+          done
+          echo "never reached running: $inst"; cat /tmp/sim.log; exit 1
+      - name: SSH in as root with the key and check systemd and Docker
+        run: |
+          echo "machine at $IP"
+          case "$IP" in 172.30.0.*) ;; *) echo "expected an address on 172.30.0.0/24"; exit 1;; esac
+          o="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10"
+          ssh $o -i /tmp/simkey root@$IP 'systemctl is-system-running --wait || true; systemctl is-active ssh docker && docker info --format "{{.ServerVersion}}" && docker run --rm hello-world'
+      - name: Other keys and passwords are refused
+        run: |
+          o="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10"
+          if ssh $o -i /tmp/otherkey root@$IP true; then echo "unknown key was accepted"; exit 1; fi
+          if ssh $o -o PreferredAuthentications=password root@$IP true; then echo "password login was accepted"; exit 1; fi
+      - name: Restart keeps the running instance
+        run: |
+          pkill -TERM -f 'node dist/index.js'
+          sleep 2
+          SIM_BACKEND=docker SIM_REPORT_ADDRESS=container SIM_STRICT_AUTH=1 \
+          SIM_DOCKER_NETWORK=sim-e2e SIM_DOCKER_SUBNET=172.30.0.0/24 \
+          SIM_STATE_FILE=/tmp/sim-state/state.json PORT=8099 \
+            nohup node dist/index.js > /tmp/sim2.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8099/dashboard && break; sleep 1; done
+          tok=$(curl -fsS -X POST http://127.0.0.1:8099/auth/realms/contabo/protocol/openid-connect/token \
+            -d grant_type=password -d client_id=c -d client_secret=s -d username=u -d password=p | jq -r .access_token)
+          status=$(curl -fsS http://127.0.0.1:8099/v1/compute/instances/$ID -H "Authorization: Bearer $tok" | jq -r '.data[0].status')
+          echo "status after restart: $status"; cat /tmp/sim2.log
+          [ "$status" = running ]
+      - name: Cancel removes the machine
+        run: |
+          tok=$(curl -fsS -X POST http://127.0.0.1:8099/auth/realms/contabo/protocol/openid-connect/token \
+            -d grant_type=password -d client_id=c -d client_secret=s -d username=u -d password=p | jq -r .access_token)
+          curl -fsS -X POST http://127.0.0.1:8099/v1/compute/instances/$ID/cancel -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' -d '{}' > /dev/null
+          sleep 3
+          left=$(docker ps -aq --filter label=managed-by=contabo-simulator | wc -l)
+          echo "managed containers left: $left"; [ "$left" -eq 0 ]
+      - name: Simulator logs
+        if: always()
+        run: cat /tmp/sim.log /tmp/sim2.log 2>/dev/null || true

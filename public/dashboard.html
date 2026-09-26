@@ -431,8 +431,11 @@
             sshCell += `<div class="ssh-cmd" onclick="copyToClipboard('${sshKey}')" title="Click to copy">🔑 ${sshKey}</div>`;
             sshCell += `<div style="color:var(--text-muted);font-size:10px;margin-top:2px;margin-bottom:6px">keys: ${keyNames.join(', ')}</div>`;
           }
-          sshCell += `<div class="ssh-cmd" onclick="copyToClipboard('${sshPass}')" title="Click to copy">🔒 ${sshPass}</div>`;
-          sshCell += `<div style="color:var(--text-muted);font-size:10px;margin-top:2px">pass: ${i.rootPassword}</div>`;
+          if (i.rootPassword) {
+            sshCell += `<div class="ssh-cmd" onclick="copyToClipboard('${sshPass}')" title="Click to copy">🔒 ${sshPass}</div>`;
+            sshCell += `<div style="color:var(--text-muted);font-size:10px;margin-top:2px">pass: ${i.rootPassword}</div>`;
+          }
+          if (!sshCell) sshCell = '<span style="color:var(--text-muted)">key only</span>';
         }
 
         return `<tr>

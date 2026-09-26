@@ -1,0 +1,37 @@
+# Contabo simulator for the Bronto staging panel.
+#
+# The staging panel (bronto-panel-stg.service, a host process) reaches the API
+# on 127.0.0.1:8099 and SSHes into test machines on the fixed bridge subnet
+# below, which the host routes to directly. Never point production at this.
+name: contabo-sim-stg
+
+services:
+  simulator:
+    build:
+      context: ../..
+    image: contabo-sim-api:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8099:5550"
+    environment:
+      SIM_BACKEND: docker
+      SIM_REPORT_ADDRESS: container
+      SIM_STRICT_AUTH: "1"
+      SIM_DOCKER_NETWORK: contabo-sim-stg
+      SIM_DOCKER_SUBNET: 172.30.0.0/24
+      SIM_MAX_INSTANCES: "3"
+      SIM_MACHINE_CPUS: "2"
+      SIM_MACHINE_MEMORY_MB: "2048"
+      SIM_MACHINE_PIDS: "4096"
+      SIM_MAX_AGE_HOURS: "24"
+      SIM_BOOT_TIMEOUT_MS: "180000"
+      SIM_STATE_FILE: /state/state.json
+      # Optional: require X-Sim-Control-Token on /sim/* (set in .env next to this file).
+      SIM_CONTROL_TOKEN: ${SIM_CONTROL_TOKEN:-}
+    volumes:
+      # The simulator starts and stops machine containers on this host.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sim-state:/state
+
+volumes:
+  sim-state:

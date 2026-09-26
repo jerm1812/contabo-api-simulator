@@ -3,7 +3,7 @@ import { CONFIG } from '../config';
 import * as store from '../instance-store';
 import { buildPaginatedResponse, buildSingleResponse } from '../response-builder';
 import { CreateInstanceRequest } from '../types';
-import { SimContext, startLifecycle, refreshFromMachine, cancelInstance, cancelTimers, defaultImageId } from '../sim';
+import { SimContext, startLifecycle, refreshFromMachine, cancelInstance, cancelTimers, defaultImageId, activeInstanceCount } from '../sim';
 import { cloudConfigSSHKeys } from '../cloud-config';
 
 function notFound(res: Response, instanceId: number) {
@@ -49,6 +49,16 @@ export function instancesRouter(ctx: SimContext): Router {
         return;
       }
 
+      const max = ctx.limits.maxInstances;
+      if (max > 0 && activeInstanceCount() >= max) {
+        console.log(`[Instances] Create refused: ${max} instance(s) already active (SIM_MAX_INSTANCES)`);
+        res.status(429).json({
+          statusCode: 429,
+          message: `Simulator instance limit reached (${max}). Cancel an instance or raise SIM_MAX_INSTANCES.`,
+        });
+        return;
+      }
+
       const imageId = normalizeImageId(body.imageId);
       const productId = body.productId || 'V45';
       const region = body.region || 'EU';
@@ -85,13 +95,13 @@ export function instancesRouter(ctx: SimContext): Router {
         displayName,
         defaultUser,
         sshKeys,
-        rootPassword: CONFIG.defaultPassword,
+        rootPassword: imageInfo.init === 'entrypoint' ? CONFIG.rootPassword : '',
         osType: imageInfo.osType,
         scenario,
         status: 'provisioning',
       });
 
-      startLifecycle(ctx, record, { dockerImage: imageInfo.dockerImage, userData, sshPublicKeys });
+      startLifecycle(ctx, record, { dockerImage: imageInfo.dockerImage, init: imageInfo.init, userData, sshPublicKeys });
       console.log(`[Instances] Created instance ${record.instance.instanceId} (scenario ${scenario})`);
 
       res

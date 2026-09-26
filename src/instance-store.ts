@@ -183,3 +183,35 @@ export function getSecret(secretId: number): ContaboSecret | undefined {
 export function getAllSecrets(): ContaboSecret[] {
   return Array.from(secrets.values());
 }
+
+// ─── Snapshot (SIM_STATE_FILE persistence) ───
+
+export interface StoreSnapshot {
+  version: 1;
+  instances: InstanceRecord[];
+  secrets: ContaboSecret[];
+  nextSecretId: number;
+  nextVHostId: number;
+}
+
+export function snapshot(): StoreSnapshot {
+  return {
+    version: 1,
+    instances: getAllInstances(),
+    secrets: getAllSecrets(),
+    nextSecretId,
+    nextVHostId,
+  };
+}
+
+/** Replace every instance and secret with a snapshot's contents. */
+export function restore(s: StoreSnapshot): void {
+  instances.clear();
+  secrets.clear();
+  for (const r of s.instances ?? []) instances.set(r.instance.instanceId, r);
+  for (const sec of s.secrets ?? []) secrets.set(sec.secretId, sec);
+  const maxSecret = Math.max(0, ...Array.from(secrets.keys()));
+  const maxVHost = Math.max(0, ...Array.from(instances.values()).map((r) => r.instance.vHostId));
+  nextSecretId = Math.max(s.nextSecretId || 1, maxSecret + 1);
+  nextVHostId = Math.max(s.nextVHostId || 73000, maxVHost + 1);
+}
